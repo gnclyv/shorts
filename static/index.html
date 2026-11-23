@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shorts Maker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: { extend: {
+    colors: { ink: '#15171c', slate: '#1e2128', line: '#323743', paper: '#ebe7de', mute: '#9b9a95', sun: '#f0b429' },
+    fontFamily: { display: ['"Bricolage Grotesque"', 'sans-serif'], body: ['Newsreader', 'Georgia', 'serif'] }
+  } }
+}
+</script>
+<style>
+  body { background: #15171c; color: #ebe7de; }
+  ::selection { background: #f0b429; color: #15171c; }
+  :focus-visible { outline: 2px solid #f0b429; outline-offset: 2px; }
+  .clip-frame { aspect-ratio: 9 / 16; }
+  @keyframes sweep { 0% { transform: translateX(-100%); } 100% { transform: translateX(450%); } }
+  .sweep { animation: sweep 1.4s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) { .sweep { animation: none; } }
+</style>
+</head>
+<body class="font-body antialiased min-h-screen">
+<main class="mx-auto max-w-7xl px-5 sm:px-8 py-10 lg:py-16 grid lg:grid-cols-[400px_1fr] gap-12 lg:gap-16">
+
+  <section class="lg:sticky lg:top-12 self-start">
+    <h1 class="font-display font-extrabold text-5xl sm:text-6xl leading-[0.95] tracking-tight">Long video in. Shorts out.</h1>
+    <p class="mt-5 text-lg text-mute max-w-sm leading-relaxed">Paste a YouTube link. We find the strongest 15 to 60 second moments and cut them to vertical 1080×1920.</p>
+
+    <form id="form" class="mt-10 space-y-6">
+      <div>
+        <label for="url" class="font-display font-medium text-sm">YouTube URL</label>
+        <input id="url" type="url" required placeholder="https://www.youtube.com/watch?v=…" class="mt-2 w-full bg-slate border border-line rounded-sm px-4 py-3 text-base placeholder:text-mute/60 focus:border-sun focus:outline-none">
+      </div>
+      <div>
+        <label for="count" class="font-display font-medium text-sm">Number of clips</label>
+        <div class="mt-2 flex items-center gap-4">
+          <input id="count" type="range" min="1" max="10" value="3" class="w-full accent-sun">
+          <output id="countOut" class="font-display font-bold text-2xl w-8 text-right">3</output>
+        </div>
+      </div>
+      <button id="submit" type="submit" class="w-full bg-sun text-ink font-display font-bold text-base py-3.5 rounded-sm hover:bg-paper transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Generate Shorts</button>
+    </form>
+
+    <div id="error" class="hidden mt-6 border border-red-400/50 bg-red-400/10 text-red-200 px-4 py-3 text-base rounded-sm" role="alert"></div>
+
+    <ol id="steps" class="hidden mt-10 space-y-4" aria-live="polite"></ol>
+    <div id="bar" class="hidden mt-6 h-1 bg-line relative overflow-hidden">
+      <div id="barFill" class="h-full bg-sun transition-all duration-500" style="width:0%"></div>
+      <div id="barSweep" class="sweep absolute inset-y-0 w-1/6 bg-paper/30"></div>
+    </div>
+  </section>
+
+  <section aria-live="polite">
+    <div id="empty" class="border border-dashed border-line rounded-sm min-h-[420px] flex items-center justify-center text-center px-8">
+      <p class="text-mute text-lg max-w-xs">Your clips appear here as soon as each one finishes rendering.</p>
+    </div>
+    <div id="grid" class="hidden grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6"></div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const STEPS = [
+  { key: 'downloading', label: 'Downloading audio', progress: 8 },
+  { key: 'transcribing', label: 'Transcribing speech', progress: 25 },
+  { key: 'analyzing', label: 'Finding the best moments', progress: 55 },
+  { key: 'clipping', label: 'Cutting vertical clips', progress: 60 },
+];
+const objectUrls = [];
+
+$('count').addEventListener('input', e => { $('countOut').textContent = e.target.value; });
+
+function showError(msg) {
+  $('error').textContent = msg;
+  $('error').classList.toggle('hidden', !msg);
+}
+
+function setBusy(busy) {
+  $('submit').disabled = busy;
+  $('submit').textContent = busy ? 'Working…' : 'Generate Shorts';
+  $('barSweep').classList.toggle('hidden', !busy);
+}
+
+function renderSteps(stage, progress, suffix = '') {
+  const idx = STEPS.findIndex(s => s.key === stage);
+  $('steps').classList.remove('hidden');
+  $('bar').classList.remove('hidden');
+  $('barFill').style.width = progress + '%';
+  $('steps').replaceChildren(...STEPS.map((s, i) => {
+    const state = stage === 'done' || i < idx ? 'done' : i === idx ? 'active' : 'idle';
+    const li = document.createElement('li');
+    li.className = 'flex items-center gap-3 text-base ' + (state === 'idle' ? 'text-mute/60' : 'text-paper');
+    const dot = document.createElement('span');
+    dot.className = 'w-2.5 h-2.5 rounded-full border ' + (state === 'done' ? 'bg-sun border-sun' : state === 'active' ? 'border-sun bg-sun/30' : 'border-line');
+    const label = document.createElement('span');
+    label.textContent = s.label + (state === 'active' ? suffix : '');
+    li.append(dot, label);
+    return li;
+  }));
+}
+
+const fmt = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+
+function buildCard(c) {
+  const card = document.createElement('article');
+  card.className = 'bg-slate border border-line rounded-sm overflow-hidden flex flex-col';
+
+  const media = document.createElement('div');
+  media.className = 'clip-frame w-full bg-black flex flex-col items-center justify-center gap-3 px-6 text-center';
+  const status = document.createElement('p');
+  status.className = 'text-mute text-base';
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.textContent = 'Retry';
+  retry.className = 'hidden border border-line hover:border-sun hover:text-sun font-display font-medium text-sm px-4 py-2 rounded-sm transition-colors';
+  media.append(status, retry);
+
+  const body = document.createElement('div');
+  body.className = 'p-4 flex-1 flex flex-col gap-3';
+  const top = document.createElement('div');
+  top.className = 'flex items-start justify-between gap-3';
+  const title = document.createElement('h3');
+  title.className = 'font-display font-bold text-lg leading-snug';
+  title.textContent = c.title;
+  const score = document.createElement('div');
+  score.className = 'text-right shrink-0';
+  const num = document.createElement('div');
+  num.className = 'font-display font-extrabold text-3xl text-sun leading-none';
+  num.textContent = c.virality_score;
+  const cap = document.createElement('div');
+  cap.className = 'text-xs text-mute mt-1';
+  cap.textContent = 'virality';
+  score.append(num, cap);
+  top.append(title, score);
+
+  const meta = document.createElement('p');
+  meta.className = 'text-mute text-sm';
+  meta.textContent = `${Math.round(c.end_time - c.start_time)}s from ${fmt(c.start_time)} to ${fmt(c.end_time)}`;
+
+  const dl = document.createElement('a');
+  dl.className = 'mt-auto text-center border border-line font-display font-medium text-sm py-2.5 rounded-sm transition-colors opacity-40 pointer-events-none';
+  dl.textContent = 'Download MP4';
+  dl.download = c.title.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_') + '.mp4';
+
+  body.append(top, meta, dl);
+  card.append(media, body);
+  return { card, media, status, retry, dl };
+}
+
+async function renderClip(url, c, ui) {
+  ui.retry.classList.add('hidden');
+  ui.status.textContent = 'Rendering…';
+  try {
+    const q = new URLSearchParams({ url, start: c.start_time, end: c.end_time });
+    const res = await fetch('/api/clip?' + q);
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(typeof d.detail === 'string' ? d.detail : 'Rendering failed or timed out.');
+    }
+    const href = URL.createObjectURL(await res.blob());
+    objectUrls.push(href);
+    const video = document.createElement('video');
+    video.className = 'clip-frame w-full bg-black object-cover';
+    video.src = href;
+    video.controls = true;
+    video.playsInline = true;
+    video.preload = 'metadata';
+    ui.media.replaceWith(video);
+    ui.media = video;
+    ui.dl.href = href;
+    ui.dl.className = 'mt-auto text-center border border-line hover:border-sun hover:text-sun font-display font-medium text-sm py-2.5 rounded-sm transition-colors';
+    return true;
+  } catch (err) {
+    ui.status.textContent = err.message;
+    ui.retry.classList.remove('hidden');
+    ui.retry.onclick = () => renderClip(url, c, ui);
+    return false;
+  }
+}
+
+async function pool(items, limit, fn) {
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) await fn(items[i++]);
+  }));
+}
+
+async function analyze(url, count) {
+  const res = await fetch('/api/process', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url, clip_count: count }),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(typeof d.detail === 'string' ? d.detail : 'Request failed or timed out.');
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result = null;
+  const handle = (line) => {
+    if (!line.trim()) return;
+    const msg = JSON.parse(line);
+    if (msg.stage === 'error') throw new Error(msg.error);
+    if (msg.stage === 'done') { result = msg; return; }
+    const step = STEPS.find(s => s.key === msg.stage);
+    if (step) renderSteps(step.key, step.progress);
+  };
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+    lines.forEach(handle);
+  }
+  handle(buffer);
+  if (!result) throw new Error('The analysis timed out. Try a shorter video.');
+  return result;
+}
+
+$('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  showError('');
+  objectUrls.splice(0).forEach(URL.revokeObjectURL);
+  $('grid').replaceChildren();
+  $('grid').classList.add('hidden');
+  $('empty').classList.remove('hidden');
+  setBusy(true);
+  renderSteps('downloading', 3);
+  try {
+    const { url, clips } = await analyze($('url').value.trim(), Number($('count').value));
+    const cards = clips.map(c => ({ c, ui: buildCard(c) }));
+    $('empty').classList.add('hidden');
+    $('grid').classList.remove('hidden');
+    $('grid').append(...cards.map(x => x.ui.card));
+    let finished = 0;
+    renderSteps('clipping', 60, ` (0/${cards.length})`);
+    await pool(cards, 2, async ({ c, ui }) => {
+      await renderClip(url, c, ui);
+      finished++;
+      renderSteps('clipping', 60 + Math.round(40 * finished / cards.length), ` (${finished}/${cards.length})`);
+    });
+    renderSteps('done', 100);
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    setBusy(false);
+  }
+});
+</script>
+</body>
+</html>

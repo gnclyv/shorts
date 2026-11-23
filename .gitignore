@@ -1,0 +1,4 @@
+.env
+.vercel
+cookies.txt
+__pycache__/
